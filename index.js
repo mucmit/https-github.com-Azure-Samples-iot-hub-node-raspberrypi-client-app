@@ -12,62 +12,74 @@ const wpi = require('node-wiring-pi');
 const Client = require('azure-iot-device').Client;
 const ConnectionString = require('azure-iot-device').ConnectionString;
 const Message = require('azure-iot-device').Message;
-const Protocol = require('azure-iot-device-mqtt').Mqtt;
+const MqttProtocol = require('azure-iot-device-mqtt').Mqtt;
+const AmqpProtocol = require('azure-iot-device-amqp').Amqp;
 
 const bi = require('az-iot-bi');
 
 const MessageProcessor = require('./messageProcessor.js');
 
-var sendingMessage = true;
+var isMessageSendOn = true;
 var messageId = 0;
 var client, config, messageProcessor;
 
 function sendMessage() {
-  if (!sendingMessage) { return; }
+  if (!isMessageSendOn) { return; }
+
   messageId++;
+
   messageProcessor.getMessage(messageId, (content, temperatureAlert) => {
-    var message = new Message(content);
+    var message = new Message(content.toString('utf-8'));
+    message.contentEncoding = 'utf-8';
+    message.contentType = 'application/json';
     message.properties.add('temperatureAlert', temperatureAlert ? 'true' : 'false');
-    console.log('Sending message: ' + content);
+
+    console.log('[Device] Sending message: ' + content);
+
     client.sendEvent(message, (err) => {
       if (err) {
-        console.error('Failed to send message to Azure IoT Hub');
+        console.error('[Device] Failed to send message to Azure IoT Hub due to:\n\t' + err.message);
       } else {
         blinkLED();
-        console.log('Message sent to Azure IoT Hub');
+        console.log('[Device] Message sent to Azure IoT Hub');
       }
+
       setTimeout(sendMessage, config.interval);
     });
   });
 }
 
 function onStart(request, response) {
-  console.log('Try to invoke method start(' + request.payload || '' + ')');
-  sendingMessage = true;
+  console.log('[Device] Trying to invoke method start(' + request.payload || '' + ')');
+
+  isMessageSendOn = true;
 
   response.send(200, 'Successully start sending message to cloud', function (err) {
     if (err) {
-      console.error('[IoT hub Client] Failed sending a method response:\n' + err.message);
+      console.error('[IoT Hub Client] Failed sending a start method response due to:\n\t' + err.message);
     }
   });
 }
 
 function onStop(request, response) {
-  console.log('Try to invoke method stop(' + request.payload || '' + ')')
-  sendingMessage = false;
+  console.log('[Device] Trying to invoke method stop(' + request.payload || '' + ')');
+
+  isMessageSendOn = false;
 
   response.send(200, 'Successully stop sending message to cloud', function (err) {
     if (err) {
-      console.error('[IoT hub Client] Failed sending a method response:\n' + err.message);
+      console.error('[IoT Hub Client] Failed sending a stop method response due to:\n\t' + err.message);
     }
   });
 }
 
 function receiveMessageCallback(msg) {
   blinkLED();
+
   var message = msg.getData().toString('utf-8');
+
   client.complete(msg, () => {
-    console.log('Receive message: ' + message);
+    console.log('Received message:\n\t' + message);
   });
 }
 
@@ -83,8 +95,15 @@ function initClient(connectionStringParam, credentialPath) {
   var connectionString = ConnectionString.parse(connectionStringParam);
   var deviceId = connectionString.DeviceId;
 
-  // fromConnectionString must specify a transport constructor, coming from any transport package.
-  client = Client.fromConnectionString(connectionStringParam, Protocol);
+  // select transport
+  if (config.transport === "amqp") {
+    console.log('[Device] Using AMQP transport protocol');
+    // fromConnectionString must specify a transport constructor, coming from any transport package.
+    client = Client.fromConnectionString(connectionStringParam, AmqpProtocol);
+  } else {
+    console.log('[Device] Using MQTT transport protocol');
+    client = Client.fromConnectionString(connectionStringParam, MqttProtocol);
+  }
 
   // Configure the client to use X509 authentication if required by the connection string.
   if (connectionString.x509) {
@@ -100,6 +119,21 @@ function initClient(connectionStringParam, credentialPath) {
 
     console.log('[Device] Using X.509 client certificate authentication');
   }
+
+  if (connectionString.GatewayHostName && config.iotEdgeRootCertFilePath) {
+    var deviceClientOptions = {
+      sa: fs.readFileSync(config.iotEdgeRootCertFilePath, 'utf-8'),
+    }
+
+    client.setOptions(deviceClientOptions, function(err) {
+      if (err) {
+        console.error('[Device] error specifying IoT Edge root certificate: ' + err);
+      }
+    });
+
+    console.log('[Device] Using IoT Edge private root certificate');
+  }
+
   return client;
 }
 
@@ -108,7 +142,7 @@ function initClient(connectionStringParam, credentialPath) {
   try {
     config = require('./config.json');
   } catch (err) {
-    console.error('Failed to load config.json: ' + err.message);
+    console.error('Failed to load config.json:\n\t' + err.message);
     return;
   }
 
@@ -122,20 +156,24 @@ function initClient(connectionStringParam, credentialPath) {
     if (!fs.existsSync(path.join(process.env.HOME, '.iot-hub-getting-started/biSettings.json'))) {
       firstTimeSetting = true;
     }
+
     bi.start();
+
     var deviceInfo = { device: "RaspberryPi", language: "NodeJS" };
+
     if (bi.isBIEnabled()) {
       bi.trackEventWithoutInternalProperties('yes', deviceInfo);
       bi.trackEvent('success', deviceInfo);
-    }
-    else {
+    } else {
       bi.disableRecordingClientIP();
       bi.trackEventWithoutInternalProperties('no', deviceInfo);
     }
-    if(firstTimeSetting) {
+
+    if (firstTimeSetting) {
       console.log("Telemetry setting will be remembered. If you would like to reset, please delete following file and run the sample again");
       console.log("~/.iot-hub-getting-started/biSettings.json\n");
     }
+
     bi.flush();
   } catch (e) {
     //ignore
@@ -148,7 +186,7 @@ function initClient(connectionStringParam, credentialPath) {
 
   client.open((err) => {
     if (err) {
-      console.error('[IoT hub Client] Connect error: ' + err.message);
+      console.error('[IoT Hub Client] Connect error:\n\t' + err.message);
       return;
     }
 
@@ -159,7 +197,7 @@ function initClient(connectionStringParam, credentialPath) {
     setInterval(() => {
       client.getTwin((err, twin) => {
         if (err) {
-          console.error("get twin message error");
+          console.error('[IoT Hub Client] Got twin message error:\n\t' + err.message);
           return;
         }
         config.interval = twin.properties.desired.interval || config.interval;

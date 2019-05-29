@@ -23,7 +23,7 @@ MessageProcessor.prototype.getMessage = function (messageId, cb) {
   if (!this.inited) { return; }
   this.sensor.read((err, data) => {
     if (err) {
-      console.log('[Sensor] Read data failed: ' + err.message);
+      console.log('[Sensor] Read data failed due to:\n\t' + err.message);
       return;
     }
 
