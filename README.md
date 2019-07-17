@@ -1,9 +1,12 @@
 ---
-services: iot-hub
-platforms: Nodejs
-author: shizn
+page_type: sample
+description: "Get familiar with Azure IoT using the Microsoft IoT Pack for Raspberry Pi 3 Starter Kit."
+languages:
+- javascript
+products:
+- azure
+- azure-iot-hub
 ---
-
 # IoT Hub Raspberry Pi 3 Client application
 
 [![Build Status](https://travis-ci.com/Azure-Samples/iot-hub-node-raspberrypi-client-app.svg?token=5ZpmkzKtuWLEXMPjmJ6P&branch=master)](https://travis-ci.com/Azure-Samples/iot-hub-node-raspberrypi-client-app)
