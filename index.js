@@ -202,7 +202,7 @@ function initClient(connectionStringParam, credentialPath) {
         }
         config.interval = twin.properties.desired.interval || config.interval;
       });
+      sendMessage();
     }, config.interval);
-    sendMessage();
   });
 })(process.argv[2]);
